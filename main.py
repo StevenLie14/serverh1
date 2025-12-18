@@ -187,10 +187,33 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     first_message = None
     if errors and isinstance(errors, list) and len(errors) > 0:
         first = errors[0]
-        # Prefer the detailed message from the validation error
-        first_message = first.get("msg") or str(first)
+        msg = first.get("msg")
+        loc = first.get("loc")
+        loc_str = ".".join([str(p) for p in loc]) if loc else None
+        input_val = first.get("input")
+        reason = None
+        ctx = first.get("ctx")
+        if isinstance(ctx, dict):
+            reason = ctx.get("reason")
+
+        parts = []
+        if msg:
+            parts.append(msg)
+        if loc_str:
+            parts.append(f"field: {loc_str}")
+        if input_val is not None:
+            parts.append(f"input: {input_val!r}")
+        if reason:
+            parts.append(f"reason: {reason}")
+
+        if parts:
+            first_message = " | ".join(parts)
+        else:
+            first_message = msg or "Validation error"
+
     if not first_message:
         first_message = "Validation error"
+
     return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=make_response(422, first_message, errors))
 
 def hash_password(password: str) -> str:
