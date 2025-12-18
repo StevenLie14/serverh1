@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, E
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 import bcrypt
 import jwt
@@ -34,7 +34,10 @@ app = FastAPI(title="Bilibili Anime API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,7 +45,6 @@ app.add_middleware(
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# Enums
 class UserRole(str, enum.Enum):
     admin = "admin"
     user = "user"
@@ -52,7 +54,6 @@ class AnimeStatus(str, enum.Enum):
     ongoing = "Ongoing"
     upcoming = "Upcoming"
 
-# SQLAlchemy Models
 class User(Base):
     __tablename__ = "users"
     
@@ -72,14 +73,12 @@ class AnimeContent(Base):
     image_url = Column(String(500))
     status = Column(Enum(AnimeStatus), default=AnimeStatus.upcoming)
     episodes = Column(Integer, nullable=True)
-    duration = Column(Integer, nullable=True)  # in minutes
+    duration = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-# Create tables
 Base.metadata.create_all(bind=engine)
 
-# Pydantic Models
 class UserRegister(BaseModel):
     username: str
     email: EmailStr
@@ -126,7 +125,17 @@ class AnimeResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# Dependency
+
+class APIResponse(BaseModel):
+    code: int
+    message: str
+    data: Optional[Any]
+
+    class Config:
+        schema_extra = {
+            "example": {"code": 200, "message": "Success", "data": None}
+        }
+
 def get_db():
     db = SessionLocal()
     try:
@@ -135,12 +144,10 @@ def get_db():
         db.close()
 
 
-# Standard API response wrapper
 def make_response(code: int, message: str, data):
     return {"code": code, "message": message, "data": data}
 
 
-# Serializers for SQLAlchemy models
 def serialize_user(user: User):
     if not user:
         return None
@@ -169,7 +176,6 @@ def serialize_anime(anime: AnimeContent):
     }
 
 
-# Exception handlers to return standardized responses
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content=make_response(exc.status_code, exc.detail, None))
@@ -179,14 +185,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=make_response(422, "Validation error", exc.errors()))
 
-# Password hashing
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
-# JWT token functions
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -214,7 +218,6 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
-# New: read token from cookie for cookie-based auth
 def get_token_from_cookie(request: Request) -> str:
     token = request.cookies.get("access_token")
     if not token:
@@ -249,14 +252,12 @@ def get_admin_user(current_user: User = Depends(get_current_user_from_cookie)):
         raise HTTPException(status_code=403, detail="Only admins can perform this action")
     return current_user
 
-# API Endpoints
-@app.get("/")
+@app.get("/", response_model=APIResponse, summary="Root", description="Simple welcome endpoint returning API information.")
 def read_root():
     return JSONResponse(status_code=200, content=make_response(200, "Welcome to Bilibili Anime API", {"welcome": "Bilibili Anime API"}))
 
-@app.post("/register")
+@app.post("/register", response_model=APIResponse, summary="Register User", description="Register a new user with `username`, `email`, and `password`. Returns the created user info in `data`.")
 def register(user: UserRegister, db: Session = Depends(get_db)):
-    # Check if user exists
     db_user = db.query(User).filter(
         (User.username == user.username) | (User.email == user.email)
     ).first()
@@ -277,7 +278,7 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     
     return JSONResponse(status_code=201, content=make_response(201, "User registered successfully", serialize_user(new_user)))
 
-@app.post("/login")
+@app.post("/login", response_model=APIResponse, summary="Login", description="Authenticate user with `email` and `password`. Sets an `access_token` cookie and returns token in `data`.")
 def login(credentials: LoginRequest, db: Session = Depends(get_db)):
     # Authenticate using email from JSON body
     email = credentials.email
@@ -294,7 +295,6 @@ def login(credentials: LoginRequest, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": user.id})
     content = make_response(200, "Login successful", {"access_token": access_token, "token_type": "bearer"})
     resp = JSONResponse(status_code=200, content=content)
-    # set cookie on the response we actually return
     resp.set_cookie(
         key="access_token",
         value=access_token,
@@ -305,30 +305,30 @@ def login(credentials: LoginRequest, db: Session = Depends(get_db)):
     )
     return resp
 
-@app.get("/users/me")
+@app.get("/users/me", response_model=APIResponse, summary="Get Current User", description="Returns currently authenticated user's profile. Requires cookie authentication.")
 def get_current_user_info(current_user: User = Depends(get_current_user_from_cookie)):
     return JSONResponse(status_code=200, content=make_response(200, "Current user retrieved", serialize_user(current_user)))
 
 
-@app.post("/logout")
+@app.post("/logout", response_model=APIResponse, summary="Logout", description="Clears the authentication cookie and logs out the current user.")
 def logout():
     resp = JSONResponse(status_code=200, content=make_response(200, "Logged out", None))
     resp.delete_cookie("access_token")
     return resp
 
-@app.get("/anime")
+@app.get("/anime", response_model=APIResponse, summary="List Anime", description="Retrieve a list of anime entries ordered by newest first. `data` contains an array of anime objects.")
 def get_all_anime(db: Session = Depends(get_db)):
     anime_list = db.query(AnimeContent).order_by(AnimeContent.created_at.desc()).all()
     return JSONResponse(status_code=200, content=make_response(200, "Anime list retrieved", [serialize_anime(a) for a in anime_list]))
 
-@app.get("/anime/{anime_id}")
+@app.get("/anime/{anime_id}", response_model=APIResponse, summary="Get Anime", description="Retrieve a single anime by its ID. Returns 404 if not found.")
 def get_anime(anime_id: int, db: Session = Depends(get_db)):
     anime = db.query(AnimeContent).filter(AnimeContent.id == anime_id).first()
     if not anime:
         raise HTTPException(status_code=404, detail="Anime not found")
     return JSONResponse(status_code=200, content=make_response(200, "Anime retrieved", serialize_anime(anime)))
 
-@app.post("/anime")
+@app.post("/anime", response_model=APIResponse, summary="Create Anime", description="Create a new anime entry. Requires admin cookie authentication. Accepts multipart form data including optional `image` file.")
 def create_anime(
     title: str = Form(...),
     description: Optional[str] = Form(None),
@@ -362,7 +362,7 @@ def create_anime(
     db.refresh(new_anime)
     return JSONResponse(status_code=201, content=make_response(201, "Anime created", serialize_anime(new_anime)))
 
-@app.put("/anime/{anime_id}")
+@app.put("/anime/{anime_id}", response_model=APIResponse, summary="Update Anime", description="Update fields of an existing anime. Only admins may perform this action.")
 def update_anime(
     anime_id: int,
     title: Optional[str] = Form(None),
@@ -403,7 +403,7 @@ def update_anime(
     db.refresh(db_anime)
     return JSONResponse(status_code=200, content=make_response(200, "Anime updated", serialize_anime(db_anime)))
 
-@app.delete("/anime/{anime_id}")
+@app.delete("/anime/{anime_id}", response_model=APIResponse, summary="Delete Anime", description="Delete an anime by ID. Only admins may perform this action. Returns success message in `data`.")
 def delete_anime(
     anime_id: int,
     db: Session = Depends(get_db),
