@@ -9,3 +9,7 @@ services:
       - "${APP_PORT}:${APP_PORT}"
     environment:
       - APP_PORT=${APP_PORT}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - DEBUG=${DEBUG}
