@@ -6,9 +6,9 @@ services:
     image: registry.stevenlie.my.id/stevenlie14/serverh1:latest
     container_name: serverh1
     ports:
-      - "${APP_PORT}:${APP_PORT}"
+      - "${PORT}:${PORT}"
     environment:
-      - APP_PORT=${APP_PORT}
+      - PORT=${PORT}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
       - SECRET_KEY=${SECRET_KEY}
       - DATABASE_URL=${DATABASE_URL}
