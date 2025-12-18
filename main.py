@@ -365,17 +365,39 @@ def create_anime(
 @app.put("/anime/{anime_id}")
 def update_anime(
     anime_id: int,
-    anime: AnimeCreate,
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    image: UploadFile = File(None),
+    status: Optional[AnimeStatus] = Form(None),
+    episodes: Optional[int] = Form(None),
+    duration: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user)
 ):
     db_anime = db.query(AnimeContent).filter(AnimeContent.id == anime_id).first()
     if not db_anime:
         raise HTTPException(status_code=404, detail="Anime not found")
-    
-    for key, value in anime.dict().items():
-        setattr(db_anime, key, value)
-    
+
+    if image is not None:
+        upload_dir = os.path.join(os.path.dirname(__file__), "static", "images")
+        os.makedirs(upload_dir, exist_ok=True)
+        filename = f"{uuid.uuid4().hex}_{image.filename}"
+        file_path = os.path.join(upload_dir, filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+        db_anime.image_url = f"/static/images/{filename}"
+
+    if title is not None:
+        db_anime.title = title
+    if description is not None:
+        db_anime.description = description
+    if status is not None:
+        db_anime.status = status
+    if episodes is not None:
+        db_anime.episodes = episodes
+    if duration is not None:
+        db_anime.duration = duration
+
     db_anime.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(db_anime)
