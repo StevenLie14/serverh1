@@ -273,27 +273,30 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     return JSONResponse(status_code=201, content=make_response(201, "User registered successfully", serialize_user(new_user)))
 
 @app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), response: Response = None):
-    user = db.query(User).filter(User.username == form_data.username).first()
-    
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # Treat the OAuth2 `username` field as the user's email for login
+    user = db.query(User).filter(User.email == form_data.username).first()
+
     if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     access_token = create_access_token(data={"sub": user.id})
-    if response is not None:
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            samesite="lax",
-            secure=False,
-            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        )
-    return JSONResponse(status_code=200, content=make_response(200, "Login successful", {"access_token": access_token, "token_type": "bearer"}))
+    content = make_response(200, "Login successful", {"access_token": access_token, "token_type": "bearer"})
+    resp = JSONResponse(status_code=200, content=content)
+    # set cookie on the response we actually return
+    resp.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    return resp
 
 @app.get("/users/me")
 def get_current_user_info(current_user: User = Depends(get_current_user_from_cookie)):
@@ -301,9 +304,10 @@ def get_current_user_info(current_user: User = Depends(get_current_user_from_coo
 
 
 @app.post("/logout")
-def logout(response: Response):
-    response.delete_cookie("access_token")
-    return JSONResponse(status_code=200, content=make_response(200, "Logged out", None))
+def logout():
+    resp = JSONResponse(status_code=200, content=make_response(200, "Logged out", None))
+    resp.delete_cookie("access_token")
+    return resp
 
 @app.get("/anime")
 def get_all_anime(db: Session = Depends(get_db)):
