@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Response, UploadFile, File, Form
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Enum
@@ -13,6 +15,8 @@ import enum
 
 from dotenv import load_dotenv
 import os
+import shutil
+import uuid
 
 load_dotenv()
 
@@ -125,6 +129,51 @@ def get_db():
     finally:
         db.close()
 
+
+# Standard API response wrapper
+def make_response(code: int, message: str, data):
+    return {"code": code, "message": message, "data": data}
+
+
+# Serializers for SQLAlchemy models
+def serialize_user(user: User):
+    if not user:
+        return None
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role.value if hasattr(user.role, 'value') else str(user.role),
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
+def serialize_anime(anime: AnimeContent):
+    if not anime:
+        return None
+    return {
+        "id": anime.id,
+        "title": anime.title,
+        "description": anime.description,
+        "image_url": anime.image_url,
+        "status": anime.status.value if hasattr(anime.status, 'value') else str(anime.status),
+        "episodes": anime.episodes,
+        "duration": anime.duration,
+        "created_at": anime.created_at.isoformat() if anime.created_at else None,
+        "updated_at": anime.updated_at.isoformat() if anime.updated_at else None,
+    }
+
+
+# Exception handlers to return standardized responses
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(status_code=exc.status_code, content=make_response(exc.status_code, exc.detail, None))
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=make_response(422, "Validation error", exc.errors()))
+
 # Password hashing
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -198,9 +247,9 @@ def get_admin_user(current_user: User = Depends(get_current_user_from_cookie)):
 # API Endpoints
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to Bilibili Anime API"}
+    return JSONResponse(status_code=200, content=make_response(200, "Welcome to Bilibili Anime API", {"welcome": "Bilibili Anime API"}))
 
-@app.post("/register", response_model=UserResponse)
+@app.post("/register")
 def register(user: UserRegister, db: Session = Depends(get_db)):
     # Check if user exists
     db_user = db.query(User).filter(
@@ -221,9 +270,9 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
     
-    return new_user
+    return JSONResponse(status_code=201, content=make_response(201, "User registered successfully", serialize_user(new_user)))
 
-@app.post("/login", response_model=Token)
+@app.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), response: Response = None):
     user = db.query(User).filter(User.username == form_data.username).first()
     
@@ -244,43 +293,65 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             secure=False,
             max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return JSONResponse(status_code=200, content=make_response(200, "Login successful", {"access_token": access_token, "token_type": "bearer"}))
 
-@app.get("/users/me", response_model=UserResponse)
+@app.get("/users/me")
 def get_current_user_info(current_user: User = Depends(get_current_user_from_cookie)):
-    return current_user
+    return JSONResponse(status_code=200, content=make_response(200, "Current user retrieved", serialize_user(current_user)))
 
 
 @app.post("/logout")
 def logout(response: Response):
     response.delete_cookie("access_token")
-    return {"message": "Logged out"}
+    return JSONResponse(status_code=200, content=make_response(200, "Logged out", None))
 
-@app.get("/anime", response_model=List[AnimeResponse])
+@app.get("/anime")
 def get_all_anime(db: Session = Depends(get_db)):
     anime_list = db.query(AnimeContent).order_by(AnimeContent.created_at.desc()).all()
-    return anime_list
+    return JSONResponse(status_code=200, content=make_response(200, "Anime list retrieved", [serialize_anime(a) for a in anime_list]))
 
-@app.get("/anime/{anime_id}", response_model=AnimeResponse)
+@app.get("/anime/{anime_id}")
 def get_anime(anime_id: int, db: Session = Depends(get_db)):
     anime = db.query(AnimeContent).filter(AnimeContent.id == anime_id).first()
     if not anime:
         raise HTTPException(status_code=404, detail="Anime not found")
-    return anime
+    return JSONResponse(status_code=200, content=make_response(200, "Anime retrieved", serialize_anime(anime)))
 
-@app.post("/anime", response_model=AnimeResponse)
+@app.post("/anime")
 def create_anime(
-    anime: AnimeCreate,
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    image: UploadFile = File(None),
+    status: AnimeStatus = Form(AnimeStatus.upcoming),
+    episodes: Optional[int] = Form(None),
+    duration: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user)
 ):
-    new_anime = AnimeContent(**anime.dict())
+    image_url = None
+    if image is not None:
+        upload_dir = os.path.join(os.path.dirname(__file__), "static", "images")
+        os.makedirs(upload_dir, exist_ok=True)
+        filename = f"{uuid.uuid4().hex}_{image.filename}"
+        file_path = os.path.join(upload_dir, filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+        image_url = f"/static/images/{filename}"
+
+    new_anime = AnimeContent(
+        title=title,
+        description=description,
+        image_url=image_url,
+        status=status,
+        episodes=episodes,
+        duration=duration,
+    )
     db.add(new_anime)
     db.commit()
     db.refresh(new_anime)
-    return new_anime
+    return JSONResponse(status_code=201, content=make_response(201, "Anime created", serialize_anime(new_anime)))
 
-@app.put("/anime/{anime_id}", response_model=AnimeResponse)
+@app.put("/anime/{anime_id}")
 def update_anime(
     anime_id: int,
     anime: AnimeCreate,
@@ -297,7 +368,7 @@ def update_anime(
     db_anime.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(db_anime)
-    return db_anime
+    return JSONResponse(status_code=200, content=make_response(200, "Anime updated", serialize_anime(db_anime)))
 
 @app.delete("/anime/{anime_id}")
 def delete_anime(
@@ -311,7 +382,7 @@ def delete_anime(
     
     db.delete(anime)
     db.commit()
-    return {"message": "Anime deleted successfully"}
+    return JSONResponse(status_code=200, content=make_response(200, "Anime deleted successfully", None))
 
 if __name__ == "__main__":
     import uvicorn
