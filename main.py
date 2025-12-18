@@ -197,17 +197,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             reason = ctx.get("reason")
 
         parts = []
-        if msg:
-            parts.append(msg)
-        if loc_str:
-            parts.append(f"field: {loc_str}")
-        if input_val is not None:
-            parts.append(f"input: {input_val!r}")
+        # if msg:
+        #     parts.append(msg)
+        # if loc_str:
+        #     parts.append(f"field: {loc_str}")
+        # if input_val is not None:
+        #     parts.append(f"input: {input_val!r}")
         if reason:
-            parts.append(f"reason: {reason}")
+            first_message = reason
+            # parts.append(f"reason: {reason}")
 
-        if parts:
-            first_message = " | ".join(parts)
+        # if parts:
+        #     first_message = "".join(parts)
         else:
             first_message = msg or "Validation error"
 
