@@ -99,6 +99,11 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
 class AnimeCreate(BaseModel):
     title: str
     description: Optional[str] = None
@@ -273,12 +278,10 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     return JSONResponse(status_code=201, content=make_response(201, "User registered successfully", serialize_user(new_user)))
 
 @app.post("/login")
-def login(
-    email: str = Form(..., description="User email for login"),
-    password: str = Form(..., description="User password"),
-    db: Session = Depends(get_db)
-):
-    # Authenticate using email
+def login(credentials: LoginRequest, db: Session = Depends(get_db)):
+    # Authenticate using email from JSON body
+    email = credentials.email
+    password = credentials.password
     user = db.query(User).filter(User.email == email).first()
 
     if not user or not verify_password(password, user.password):
