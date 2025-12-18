@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Enum
@@ -28,7 +28,6 @@ Base = declarative_base()
 
 app = FastAPI(title="Bilibili Anime API")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -57,7 +56,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     email = Column(String(100), unique=True, nullable=False)
     password = Column(String(255), nullable=False)
-    role = Column(Enum(UserRole), default=UserRole.user)
+    role = Column(Enum(UserRole), default=UserRole.admin)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class AnimeContent(Base):
@@ -160,7 +159,38 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
-def get_admin_user(current_user: User = Depends(get_current_user)):
+
+# New: read token from cookie for cookie-based auth
+def get_token_from_cookie(request: Request) -> str:
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token
+
+
+def get_current_user_from_cookie(token: str = Depends(get_token_from_cookie), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except jwt.PyJWTError:
+        raise credentials_exception
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+def get_admin_user(current_user: User = Depends(get_current_user_from_cookie)):
     if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Only admins can perform this action")
     return current_user
@@ -194,7 +224,7 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     return new_user
 
 @app.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), response: Response = None):
     user = db.query(User).filter(User.username == form_data.username).first()
     
     if not user or not verify_password(form_data.password, user.password):
@@ -205,11 +235,26 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         )
     
     access_token = create_access_token(data={"sub": user.id})
+    if response is not None:
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/users/me", response_model=UserResponse)
-def get_current_user_info(current_user: User = Depends(get_current_user)):
+def get_current_user_info(current_user: User = Depends(get_current_user_from_cookie)):
     return current_user
+
+
+@app.post("/logout")
+def logout(response: Response):
+    response.delete_cookie("access_token")
+    return {"message": "Logged out"}
 
 @app.get("/anime", response_model=List[AnimeResponse])
 def get_all_anime(db: Session = Depends(get_db)):
