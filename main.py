@@ -183,7 +183,15 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=make_response(422, "Validation error", exc.errors()))
+    errors = exc.errors()
+    first_message = None
+    if errors and isinstance(errors, list) and len(errors) > 0:
+        first = errors[0]
+        # Prefer the detailed message from the validation error
+        first_message = first.get("msg") or str(first)
+    if not first_message:
+        first_message = "Validation error"
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=make_response(422, first_message, errors))
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
