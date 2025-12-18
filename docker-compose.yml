@@ -13,6 +13,8 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - DATABASE_URL=${DATABASE_URL}
       - DEBUG=${DEBUG}
+    volumes:
+      - ./static/images:/app/static/images
     networks:
       - stevenlie
 
