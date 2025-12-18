@@ -273,11 +273,15 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
     return JSONResponse(status_code=201, content=make_response(201, "User registered successfully", serialize_user(new_user)))
 
 @app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # Treat the OAuth2 `username` field as the user's email for login
-    user = db.query(User).filter(User.email == form_data.username).first()
+def login(
+    email: str = Form(..., description="User email for login"),
+    password: str = Form(..., description="User password"),
+    db: Session = Depends(get_db)
+):
+    # Authenticate using email
+    user = db.query(User).filter(User.email == email).first()
 
-    if not user or not verify_password(form_data.password, user.password):
+    if not user or not verify_password(password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
