@@ -1,0 +1,11 @@
+services:
+  serverh1:
+    tty: true
+    pull_policy: always
+    restart: unless-stopped
+    image: registry.stevenlie.my.id/stevenlie14/serverh1:latest
+    container_name: serverh1
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    environment:
+      - APP_PORT=${APP_PORT}
