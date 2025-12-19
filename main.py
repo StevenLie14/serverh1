@@ -336,8 +336,9 @@ def login(credentials: LoginRequest, db: Session = Depends(get_db)):
         key="access_token",
         value=access_token,
         httponly=True,
-        samesite="lax",
-        secure=False,
+        samesite="none",
+        secure=True,
+        domain=None,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
     return resp
