@@ -25,6 +25,8 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          provenance: false
+          sbom: false
           tags: ${{ secrets.REGISTRY_URL }}/stevenlie14/${{ github.event.repository.name }}:latest
 
 
