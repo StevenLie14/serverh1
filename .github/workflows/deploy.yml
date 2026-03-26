@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: hostinger
+    runs-on: shin
     steps:
       - name: Git Checkout Repository
         uses: actions/checkout@v4
