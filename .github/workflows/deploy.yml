@@ -45,7 +45,7 @@ jobs:
           password: ${{ secrets.VAULT_PASSWORD }}
           tlsSkipVerify: true
           secrets: |
-            kv/data/stevenlie *
+            ${{ secrets.VAULT_PATH }} *
 
       - name: Docker Login
         uses: docker/login-action@v3
